@@ -9,7 +9,7 @@ from tqdm import tqdm
 from .base_postprocessor import BasePostprocessor
 
 normalizer = lambda x: x / np.linalg.norm(x, axis=-1, keepdims=True) + 1e-10
-
+device = torch.device("mps") # device = MPS
 
 class KNNPostprocessor(BasePostprocessor):
     def __init__(self, config):
@@ -29,7 +29,8 @@ class KNNPostprocessor(BasePostprocessor):
                                   desc='Setup: ',
                                   position=0,
                                   leave=True):
-                    data = batch['data'].cuda()
+                    # data = batch['data'].cuda()
+                    data = batch['data'].to(device) # use MPS
                     data = data.float()
 
                     _, feature = net(data, return_feature=True)

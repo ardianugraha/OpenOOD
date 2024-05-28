@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 
 import openood.utils.comm as comm
 
+device = torch.device("mps") # device = MPS
 
 class BasePostprocessor:
     def __init__(self, config):
@@ -29,8 +30,10 @@ class BasePostprocessor:
         pred_list, conf_list, label_list = [], [], []
         for batch in tqdm(data_loader,
                           disable=not progress or not comm.is_main_process()):
-            data = batch['data'].cuda()
-            label = batch['label'].cuda()
+            # data = batch['data'].cuda()
+            # label = batch['label'].cuda()
+            data = batch['data'].to(device) # use MPS
+            label = batch['label'].to(device) # use MPS
             pred, conf = self.postprocess(net, data)
 
             pred_list.append(pred.cpu())
