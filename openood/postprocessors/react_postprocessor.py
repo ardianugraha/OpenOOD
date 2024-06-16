@@ -7,6 +7,7 @@ from tqdm import tqdm
 
 from .base_postprocessor import BasePostprocessor
 
+device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
 
 class ReactPostprocessor(BasePostprocessor):
     def __init__(self, config):
@@ -25,7 +26,7 @@ class ReactPostprocessor(BasePostprocessor):
                                   desc='Setup: ',
                                   position=0,
                                   leave=True):
-                    data = batch['data'].cuda()
+                    data = batch['data'].to(device)
                     data = data.float()
 
                     _, feature = net(data, return_feature=True)

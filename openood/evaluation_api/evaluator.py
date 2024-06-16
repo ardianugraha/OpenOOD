@@ -18,6 +18,7 @@ from .datasets import DATA_INFO, data_setup, get_id_ood_dataloader
 from .postprocessor import get_postprocessor
 from .preprocessor import get_default_preprocessor
 
+device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
 
 class Evaluator:
     def __init__(
@@ -101,6 +102,7 @@ class Evaluator:
 
         # load data
         data_setup(data_root, id_name)
+        # print("datasets downloaded") # debug message
         loader_kwargs = {
             'batch_size': batch_size,
             'shuffle': shuffle,
@@ -108,7 +110,7 @@ class Evaluator:
         }
         dataloader_dict = get_id_ood_dataloader(id_name, data_root,
                                                 preprocessor, **loader_kwargs)
-
+        # print("datasets loaded") # debug message
         # wrap base model to work with certain postprocessors
         if postprocessor_name == 'react':
             net = ReactNet(net)
@@ -174,7 +176,8 @@ class Evaluator:
         all_labels = []
         with torch.no_grad():
             for batch in tqdm(data_loader, desc=msg, disable=not progress):
-                data = batch['data'].cuda()
+                # data = batch['data'].cuda()
+                data = batch['data'].to(device) # use MPS
                 logits = self.net(data)
                 preds = logits.argmax(1)
                 all_preds.append(preds.cpu())
@@ -253,62 +256,70 @@ class Evaluator:
             if self.scores['id']['test'] is None:
                 print(f'Performing inference on {self.id_name} test set...',
                       flush=True)
-                id_pred, id_conf, id_gt = self.postprocessor.inference(
+                id_pred, id_conf, id_gt, id_file_paths = self.postprocessor.inference(
                     self.net, self.dataloader_dict['id']['test'], progress)
-                self.scores['id']['test'] = [id_pred, id_conf, id_gt]
+                self.scores['id']['test'] = [id_pred, id_conf, id_gt, id_file_paths]
             else:
-                id_pred, id_conf, id_gt = self.scores['id']['test']
+                id_pred, id_conf, id_gt, id_file_paths = self.scores['id']['test']
 
             if fsood:
-                csid_pred, csid_conf, csid_gt = [], [], []
+                csid_pred, csid_conf, csid_gt, csid_file_paths = [], [], [], []
                 for i, dataset_name in enumerate(self.scores['csid'].keys()):
                     if self.scores['csid'][dataset_name] is None:
                         print(
                             f'Performing inference on {self.id_name} '
                             f'(cs) test set [{i+1}]: {dataset_name}...',
                             flush=True)
-                        temp_pred, temp_conf, temp_gt = \
+                        temp_pred, temp_conf, temp_gt, temp_file_paths = \
                             self.postprocessor.inference(
                                 self.net,
                                 self.dataloader_dict['csid'][dataset_name],
                                 progress)
                         self.scores['csid'][dataset_name] = [
-                            temp_pred, temp_conf, temp_gt
+                            temp_pred, temp_conf, temp_gt, temp_file_paths
                         ]
 
                     csid_pred.append(self.scores['csid'][dataset_name][0])
                     csid_conf.append(self.scores['csid'][dataset_name][1])
                     csid_gt.append(self.scores['csid'][dataset_name][2])
+                    csid_file_paths.append(self.scores['csid'][dataset_name][3])
 
                 csid_pred = np.concatenate(csid_pred)
                 csid_conf = np.concatenate(csid_conf)
                 csid_gt = np.concatenate(csid_gt)
+                csid_file_paths = np.concatenate(csid_file_paths)
 
                 id_pred = np.concatenate((id_pred, csid_pred))
                 id_conf = np.concatenate((id_conf, csid_conf))
                 id_gt = np.concatenate((id_gt, csid_gt))
+                id_file_paths = np.concatenate((id_file_paths, csid_file_paths))
 
             # load nearood data and compute ood metrics
-            near_metrics = self._eval_ood([id_pred, id_conf, id_gt],
+            near_metrics = self._eval_ood([id_pred, id_conf, id_gt,  id_file_paths],
                                           ood_split='near',
                                           progress=progress)
+            # farood not used
             # load farood data and compute ood metrics
-            far_metrics = self._eval_ood([id_pred, id_conf, id_gt],
-                                         ood_split='far',
-                                         progress=progress)
+            # far_metrics = self._eval_ood([id_pred, id_conf, id_gt],
+            #                              ood_split='far',
+            #                              progress=progress)
 
             if self.metrics[f'{id_name}_acc'] is None:
                 self.eval_acc(id_name)
             near_metrics[:, -1] = np.array([self.metrics[f'{id_name}_acc']] *
                                            len(near_metrics))
-            far_metrics[:, -1] = np.array([self.metrics[f'{id_name}_acc']] *
-                                          len(far_metrics))
+            # farood not used
+            # far_metrics[:, -1] = np.array([self.metrics[f'{id_name}_acc']] *
+            #                               len(far_metrics))
 
             self.metrics[task] = pd.DataFrame(
-                np.concatenate([near_metrics, far_metrics], axis=0),
+                # np.concatenate([near_metrics, far_metrics], axis=0), # farood not used
+                # index=list(self.dataloader_dict['ood']['near'].keys()) +
+                # ['nearood'] + list(self.dataloader_dict['ood']['far'].keys()) +
+                # ['farood'],
+                np.concatenate([near_metrics], axis=0), # only nearood
                 index=list(self.dataloader_dict['ood']['near'].keys()) +
-                ['nearood'] + list(self.dataloader_dict['ood']['far'].keys()) +
-                ['farood'],
+                ['nearood'], # only nearood
                 columns=['FPR@95', 'AUROC', 'AUPR_IN', 'AUPR_OUT', 'ACC'],
             )
         else:
@@ -327,17 +338,17 @@ class Evaluator:
                   ood_split: str = 'near',
                   progress: bool = True):
         print(f'Processing {ood_split} ood...', flush=True)
-        [id_pred, id_conf, id_gt] = id_list
+        [id_pred, id_conf, id_gt, id_file_paths] = id_list
         metrics_list = []
         for dataset_name, ood_dl in self.dataloader_dict['ood'][
                 ood_split].items():
             if self.scores['ood'][ood_split][dataset_name] is None:
                 print(f'Performing inference on {dataset_name} dataset...',
                       flush=True)
-                ood_pred, ood_conf, ood_gt = self.postprocessor.inference(
+                ood_pred, ood_conf, ood_gt, ood_file_path = self.postprocessor.inference(
                     self.net, ood_dl, progress)
                 self.scores['ood'][ood_split][dataset_name] = [
-                    ood_pred, ood_conf, ood_gt
+                    ood_pred, ood_conf, ood_gt, ood_file_path
                 ]
             else:
                 print(
@@ -345,12 +356,13 @@ class Evaluator:
                     f'{dataset_name} dataset...',
                     flush=True)
                 [ood_pred, ood_conf,
-                 ood_gt] = self.scores['ood'][ood_split][dataset_name]
+                 ood_gt, ood_file_path] = self.scores['ood'][ood_split][dataset_name]
 
             ood_gt = -1 * np.ones_like(ood_gt)  # hard set to -1 as ood
             pred = np.concatenate([id_pred, ood_pred])
             conf = np.concatenate([id_conf, ood_conf])
             label = np.concatenate([id_gt, ood_gt])
+            path = np.concatenate([id_file_paths, ood_file_path])
 
             print(f'Computing metrics on {dataset_name} dataset...')
             ood_metrics = compute_all_metrics(conf, label, pred)
@@ -386,7 +398,7 @@ class Evaluator:
         for name in self.postprocessor.args_dict.keys():
             hyperparam_names.append(name)
             count += 1
-
+        # print("check 1") # debug message
         for name in hyperparam_names:
             hyperparam_list.append(self.postprocessor.args_dict[name])
 

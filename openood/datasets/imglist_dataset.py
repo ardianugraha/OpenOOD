@@ -64,6 +64,7 @@ class ImglistDataset(BaseDataset):
         path = os.path.join(self.data_dir, image_name)
         sample = dict()
         sample['image_name'] = image_name
+        sample['file_path'] = path  # Include file path
         kwargs = {'name': self.name, 'path': path, 'tokens': tokens}
         try:
             # some preprocessor methods require setup

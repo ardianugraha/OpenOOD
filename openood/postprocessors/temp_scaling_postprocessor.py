@@ -6,6 +6,7 @@ from tqdm import tqdm
 
 from .base_postprocessor import BasePostprocessor
 
+device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
 
 class TemperatureScalingPostprocessor(BasePostprocessor):
     """A decorator which wraps a model with temperature scaling, internalize
@@ -13,8 +14,8 @@ class TemperatureScalingPostprocessor(BasePostprocessor):
     def __init__(self, config):
         super(TemperatureScalingPostprocessor, self).__init__(config)
         self.config = config
-        self.temperature = nn.Parameter(torch.ones(1, device='cuda') *
-                                        1.5)  # initialize T
+        self.temperature = nn.Parameter(torch.ones(1, device=device) *
+                                        1.5)  # initialize T # device mps
         self.setup_flag = False
 
     def setup(self, net: nn.Module, id_loader_dict, ood_loader_dict):
@@ -24,21 +25,21 @@ class TemperatureScalingPostprocessor(BasePostprocessor):
             ), 'No validation dataset found!'
 
             val_dl = id_loader_dict['val']
-            nll_criterion = nn.CrossEntropyLoss().cuda()
+            nll_criterion = nn.CrossEntropyLoss().to(device)
 
             logits_list = []  # fit in whole dataset at one time to back prop
             labels_list = []
             with torch.no_grad(
             ):  # fix other params of the net, only learn temperature
                 for batch in tqdm(val_dl):
-                    data = batch['data'].cuda()
+                    data = batch['data'].to(device)
                     labels = batch['label']
                     logits = net(data)
                     logits_list.append(logits)
                     labels_list.append(labels)
                 # convert a list of many tensors (each of a batch) to one tensor
-                logits = torch.cat(logits_list).cuda()
-                labels = torch.cat(labels_list).cuda()
+                logits = torch.cat(logits_list).to(device)
+                labels = torch.cat(labels_list).to(device)
                 # calculate NLL before temperature scaling
                 before_temperature_nll = nll_criterion(logits, labels)
 
